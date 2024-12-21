@@ -1,9 +1,12 @@
 lab-code/
 .venv/
+src/.idea
+src/__pycache__
 
 antrenare/
 testare/
 validare/
 evaluare/
+output/
 
 Tema2.pdf

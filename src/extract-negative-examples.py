@@ -131,4 +131,4 @@ def create_negative_examples(max_neg_per_image=10):
     logging.info(f"All done. Total negative examples created: {total_neg_created}")
 
 if __name__ == '__main__':
-    create_negative_examples(max_neg_per_image=10)
+    create_negative_examples(max_neg_per_image=5)

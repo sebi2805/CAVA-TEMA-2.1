@@ -17,6 +17,20 @@ class FacialDetector:
         self.params = params
         self.best_model = None
 
+    def compute_color_hist(self, img_color, bins=16):
+        hsv = cv.cvtColor(img_color, cv.COLOR_BGR2HSV)
+        
+        hist = cv.calcHist(
+            [hsv],                        # images
+            [0, 1, 2],                    # channels: H, S, V
+            None,                         # no mask
+            [bins, bins, bins],           # histogram size per channel
+            [0, 180, 0, 256, 0, 256]      # range of H, S, V
+        )
+        
+        hist = cv.normalize(hist, hist).flatten()
+        return hist
+    
     def get_positive_descriptors(self):
         # in aceasta functie calculam descriptorii pozitivi
         # vom returna un numpy array de dimensiuni NXD
@@ -35,17 +49,22 @@ class FacialDetector:
         print('Calculam descriptorii pt %d imagini pozitive...' % num_images)
         for i in range(num_images):
             print('Procesam exemplul pozitiv numarul %d...' % i)
-            img = cv.imread(files[i], cv.IMREAD_GRAYSCALE)
+            img = cv.imread(files[i])
             
-            features = hog(img, pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
+            hog_features = hog(cv.cvtColor(img, cv.COLOR_BGR2GRAY), pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
                            cells_per_block=(2, 2), feature_vector=True)
-            print(len(features))
+            color_features = self.compute_color_hist(img, bins=self.params.bins)
 
-            positive_descriptors.append(features)
+            combined_features = np.concatenate((hog_features, color_features))
+            print(len(combined_features))
+            positive_descriptors.append(combined_features)
             if self.params.use_flip_images:
-                features = hog(np.fliplr(img), pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
+                hog_features = hog(np.fliplr(cv.cvtColor(img, cv.COLOR_BGR2GRAY)), pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
                                cells_per_block=(2, 2), feature_vector=True)
-                positive_descriptors.append(features)
+                color_features = self.compute_color_hist(np.fliplr(img), bins=self.params.bins)
+                combined_features = np.concatenate((hog_features, color_features))
+
+                positive_descriptors.append(combined_features)
 
         positive_descriptors = np.array(positive_descriptors)
         return positive_descriptors
@@ -65,17 +84,23 @@ class FacialDetector:
         print('Calculam descriptorii pt %d imagini negative...' % num_images)
         for i in range(num_images):
             print('Procesam exemplul negativ numarul %d...' % i)
-            img = cv.imread(files[i], cv.IMREAD_GRAYSCALE)
+            img = cv.imread(files[i])
             
-            features = hog(img, pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
+            hog_features = hog(cv.cvtColor(img, cv.COLOR_BGR2GRAY), pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
                            cells_per_block=(2, 2), feature_vector=True)
-            print(len(features))
+            color_features = self.compute_color_hist(img, bins=self.params.bins)
 
-            negative_descriptors.append(features)
+            combined_features = np.concatenate((hog_features, color_features))
+            print(len(combined_features))
+
+            negative_descriptors.append(combined_features)
             if self.params.use_flip_images:
-                features = hog(np.fliplr(img), pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
-                               cells_per_block=(2, 2), feature_vector=True)
-                negative_descriptors.append(features)
+                hog_features = hog(np.fliplr(cv.cvtColor(img, cv.COLOR_BGR2GRAY)), pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
+                            cells_per_block=(2, 2), feature_vector=True)
+                color_features = self.compute_color_hist(np.fliplr(img), bins=self.params.bins)
+
+                combined_features = np.concatenate((hog_features, color_features))
+                negative_descriptors.append(combined_features)
 
         negative_descriptors = np.array(negative_descriptors)
         return negative_descriptors
@@ -205,7 +230,7 @@ class FacialDetector:
         for i in range(num_test_images):
             start_time = timeit.default_timer()
             print('Procesam imaginea de testare %d/%d..' % (i + 1, num_test_images))
-            img = cv.imread(test_files[i], cv.IMREAD_GRAYSCALE)
+            img = cv.imread(test_files[i])
 
             scale = 0.5
             min_size = (self.params.dim_window, self.params.dim_window)
@@ -217,27 +242,32 @@ class FacialDetector:
             for j, resized_img in enumerate(pyramid):
                 current_scale = scales[j]
                 
-                hog_descriptors = hog(resized_img, pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
-                                    cells_per_block=(2, 2), feature_vector=False)
                 num_cols = resized_img.shape[1] // self.params.dim_hog_cell - 1
                 num_rows = resized_img.shape[0] // self.params.dim_hog_cell - 1
                 num_cell_in_template = self.params.dim_window // self.params.dim_hog_cell - 1
 
                 for y in range(0, num_rows - num_cell_in_template):
                     for x in range(0, num_cols - num_cell_in_template):
-                        descr = hog_descriptors[y:y + num_cell_in_template, x:x + num_cell_in_template].flatten()
-                        score = np.dot(descr, w)[0] + bias
-                        if score > self.params.threshold:
-                            x_min = int(x * self.params.dim_hog_cell)
-                            y_min = int(y * self.params.dim_hog_cell)
-                            x_max = int(x * self.params.dim_hog_cell + self.params.dim_window)
-                            y_max = int(y * self.params.dim_hog_cell + self.params.dim_window)
+                        x_min_local = x * self.params.dim_hog_cell
+                        y_min_local = y * self.params.dim_hog_cell
+                        x_max_local = x_min_local + self.params.dim_window
+                        y_max_local = y_min_local + self.params.dim_window
 
-                            # we need to come back to the original detection
-                            x_min = int(x_min / current_scale)
-                            y_min = int(y_min / current_scale)
-                            x_max = int(x_max / current_scale)
-                            y_max = int(y_max / current_scale)
+                        window = resized_img[y_min_local:y_max_local, x_min_local:x_max_local]
+
+                        hog_features = hog(cv.cvtColor(window, cv.COLOR_BGR2GRAY), pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
+                                        cells_per_block=(2, 2), feature_vector=True)
+
+                        color_features = self.compute_color_hist(window, bins=self.params.bins)
+
+                        descr = np.concatenate((hog_features, color_features))
+                        score = np.dot(descr, w)[0] + bias
+
+                        if score > self.params.threshold:
+                            x_min = int(x_min_local / current_scale)
+                            y_min = int(y_min_local / current_scale)
+                            x_max = int(x_max_local / current_scale)
+                            y_max = int(y_max_local / current_scale)
 
                             image_detections.append([x_min, y_min, x_max, y_max])
                             image_scores.append(score)

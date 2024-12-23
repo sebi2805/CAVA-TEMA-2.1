@@ -1,114 +1,86 @@
 from Parameters import *
+import os
 import numpy as np
 from sklearn.svm import LinearSVC
 import matplotlib.pyplot as plt
 import glob
 import cv2 as cv
-import pdb
 import pickle
 import ntpath
 from copy import deepcopy
 import timeit
 from skimage.feature import hog
 
-
 class FacialDetector:
-    def __init__(self, params:Parameters):
+    def __init__(self, params: Parameters):
         self.params = params
         self.best_model = None
 
-    def compute_color_hist(self, img_color, bins=16):
-        hsv = cv.cvtColor(img_color, cv.COLOR_BGR2HSV)
-        
-        hist = cv.calcHist(
-            [hsv],                        # images
-            [0, 1, 2],                    # channels: H, S, V
-            None,                         # no mask
-            [bins, bins, bins],           # histogram size per channel
-            [0, 180, 0, 256, 0, 256]      # range of H, S, V
+    def compute_descriptors(self, img):
+        hog_features = hog(
+            cv.cvtColor(img, cv.COLOR_BGR2GRAY),
+            pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
+            cells_per_block=(2, 2), feature_vector=True
         )
-        
-        hist = cv.normalize(hist, hist).flatten()
-        return hist
-    
-    def get_positive_descriptors(self):
-        # in aceasta functie calculam descriptorii pozitivi
-        # vom returna un numpy array de dimensiuni NXD
-        # unde N - numar exemplelor pozitive
-        # iar D - dimensiunea descriptorului
-        # D = (params.dim_window/params.dim_hog_cell - 1) ^ 2 * params.dim_descriptor_cell (fetele sunt patrate)
 
+        hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV)
+        hist = cv.calcHist(
+            [hsv], [0, 1, 2], None,
+            [self.params.bins, self.params.bins, self.params.bins],
+            [0, 180, 0, 256, 0, 256]
+        )
+
+        color_features = cv.normalize(hist, hist).flatten()
+
+        return np.concatenate((hog_features, color_features))
+
+    def get_descriptors_from_directory(self, directory, label):
         files = []
-        for root, dirs, filenames in os.walk(self.params.dir_pos_examples):
+        for root, dirs, filenames in os.walk(directory):
             for filename in filenames:
                 if filename.endswith('.jpg'):
                     files.append(os.path.join(root, filename))
 
         num_images = len(files)
-        positive_descriptors = []
-        print('Calculam descriptorii pt %d imagini pozitive...' % num_images)
-        for i in range(num_images):
-            print('Procesam exemplul pozitiv numarul %d...' % i)
-            img = cv.imread(files[i])
-            
-            hog_features = hog(cv.cvtColor(img, cv.COLOR_BGR2GRAY), pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
-                           cells_per_block=(2, 2), feature_vector=True)
-            color_features = self.compute_color_hist(img, bins=self.params.bins)
+        descriptors_list = []
+        print(f"Calculam descriptorii pt {num_images} imagini {label}...")
 
-            combined_features = np.concatenate((hog_features, color_features))
-            print(len(combined_features))
-            positive_descriptors.append(combined_features)
+        for i, file_path in enumerate(files):
+            print(f"Procesam exemplul {label} numarul {i}...")
+            img = cv.imread(file_path)
+
+            combined_features = self.compute_descriptors(img)
+            descriptors_list.append(combined_features)
+
             if self.params.use_flip_images:
-                hog_features = hog(np.fliplr(cv.cvtColor(img, cv.COLOR_BGR2GRAY)), pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
-                               cells_per_block=(2, 2), feature_vector=True)
-                color_features = self.compute_color_hist(np.fliplr(img), bins=self.params.bins)
-                combined_features = np.concatenate((hog_features, color_features))
+                flipped_img = np.fliplr(img)
+                combined_features = self.compute_descriptors(flipped_img)
+                descriptors_list.append(combined_features)
 
-                positive_descriptors.append(combined_features)
+        descriptors_list = np.array(descriptors_list)
+        return descriptors_list
 
-        positive_descriptors = np.array(positive_descriptors)
-        return positive_descriptors
+    def get_positive_descriptors(self):
+        return self.get_descriptors_from_directory(self.params.dir_pos_examples, label="pozitive")
 
     def get_negative_descriptors(self):
-        # in aceasta functie folosim descriptorii negativi calculati in 
-        # extract negative examples 
+        negative_examples = self.get_descriptors_from_directory(self.params.dir_neg_examples, label="negative")
+        hard_negative_examples = self.get_descriptors_from_directory(self.params.dir_hard_neg_examples, label="hard-negative")
 
-        files = []
-        for root, dirs, filenames in os.walk(self.params.dir_neg_examples):
-            for filename in filenames:
-                if filename.endswith('.jpg'):
-                    files.append(os.path.join(root, filename))
-
-        num_images = len(files)
-        negative_descriptors = []
-        print('Calculam descriptorii pt %d imagini negative...' % num_images)
-        for i in range(num_images):
-            print('Procesam exemplul negativ numarul %d...' % i)
-            img = cv.imread(files[i])
-            
-            hog_features = hog(cv.cvtColor(img, cv.COLOR_BGR2GRAY), pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
-                           cells_per_block=(2, 2), feature_vector=True)
-            color_features = self.compute_color_hist(img, bins=self.params.bins)
-
-            combined_features = np.concatenate((hog_features, color_features))
-            print(len(combined_features))
-
-            negative_descriptors.append(combined_features)
-            if self.params.use_flip_images:
-                hog_features = hog(np.fliplr(cv.cvtColor(img, cv.COLOR_BGR2GRAY)), pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
-                            cells_per_block=(2, 2), feature_vector=True)
-                color_features = self.compute_color_hist(np.fliplr(img), bins=self.params.bins)
-
-                combined_features = np.concatenate((hog_features, color_features))
-                negative_descriptors.append(combined_features)
-
-        negative_descriptors = np.array(negative_descriptors)
-        return negative_descriptors
+        if len(hard_negative_examples) > 0:
+            negative_examples = np.concatenate((negative_examples, hard_negative_examples))
+        
+        return negative_examples
 
     def train_classifier(self, training_examples, train_labels):
-        svm_file_name = os.path.join(self.params.dir_save_files, 'best_model_%d_%d_%d' %
-                                     (self.params.dim_hog_cell, self.params.number_negative_examples,
-                                      self.params.number_positive_examples))
+        svm_file_name = os.path.join(
+            self.params.dir_save_files,
+            'best_model_%d_%d_%d' % (
+                self.params.dim_hog_cell,
+                self.params.number_negative_examples,
+                self.params.number_positive_examples
+            )
+        )
         if os.path.exists(svm_file_name):
             self.best_model = pickle.load(open(svm_file_name, 'rb'))
             return
@@ -116,7 +88,7 @@ class FacialDetector:
         best_accuracy = 0
         best_c = 0
         best_model = None
-        Cs = [10 ** -5, 10 ** -4,  10 ** -3,  10 ** -2, 10 ** -1, 10 ** 0]
+        Cs = [10 ** -5, 10 ** -4, 10 ** -3, 10 ** -2, 10 ** -1, 10 ** 0]
         for c in Cs:
             print('Antrenam un clasificator pentru c=%f' % c)
             model = LinearSVC(C=c)
@@ -129,16 +101,12 @@ class FacialDetector:
                 best_model = deepcopy(model)
 
         print('Performanta clasificatorului optim pt c = %f' % best_c)
-        # salveaza clasificatorul
         pickle.dump(best_model, open(svm_file_name, 'wb'))
 
-        # vizualizeaza cat de bine sunt separate exemplele pozitive de cele negative dupa antrenare
-        # ideal ar fi ca exemplele pozitive sa primeasca scoruri > 0, iar exemplele negative sa primeasca scoruri < 0
         scores = best_model.decision_function(training_examples)
         self.best_model = best_model
         positive_scores = scores[train_labels > 0]
         negative_scores = scores[train_labels <= 0]
-
 
         plt.plot(np.sort(positive_scores))
         plt.plot(np.zeros(len(positive_scores)))
@@ -156,26 +124,13 @@ class FacialDetector:
         y_b = min(bbox_a[3], bbox_b[3])
 
         inter_area = max(0, x_b - x_a + 1) * max(0, y_b - y_a + 1)
-
         box_a_area = (bbox_a[2] - bbox_a[0] + 1) * (bbox_a[3] - bbox_a[1] + 1)
         box_b_area = (bbox_b[2] - bbox_b[0] + 1) * (bbox_b[3] - bbox_b[1] + 1)
 
         iou = inter_area / float(box_a_area + box_b_area - inter_area)
-
         return iou
 
     def non_maximal_suppression(self, image_detections, image_scores, image_size):
-        """
-        Detectiile cu scor mare suprima detectiile ce se suprapun cu acestea dar au scor mai mic.
-        Detectiile se pot suprapune partial, dar centrul unei detectii nu poate
-        fi in interiorul celeilalte detectii.
-        :param image_detections:  numpy array de dimensiune NX4, unde N este numarul de detectii.
-        :param image_scores: numpy array de dimensiune N
-        :param image_size: tuplu, dimensiunea imaginii
-        :return: image_detections si image_scores care sunt maximale.
-        """
-
-        # xmin, ymin, xmax, ymax
         x_out_of_bounds = np.where(image_detections[:, 2] > image_size[1])[0]
         y_out_of_bounds = np.where(image_detections[:, 3] > image_size[0])[0]
         print(x_out_of_bounds, y_out_of_bounds)
@@ -188,44 +143,133 @@ class FacialDetector:
         is_maximal = np.ones(len(image_detections)).astype(bool)
         iou_threshold = 0.3
         for i in range(len(sorted_image_detections) - 1):
-            if is_maximal[i] == True:  # don't change to 'is True' because is a numpy True and is not a python True :)
+            if is_maximal[i] == True:
                 for j in range(i + 1, len(sorted_image_detections)):
-                    if is_maximal[j] == True:  # don't change to 'is True' because is a numpy True and is not a python True :)
-                        if self.intersection_over_union(sorted_image_detections[i],sorted_image_detections[j]) > iou_threshold:is_maximal[j] = False
-                        else:  # verificam daca centrul detectiei este in mijlocul detectiei cu scor mai mare
+                    if is_maximal[j] == True:
+                        if self.intersection_over_union(sorted_image_detections[i], sorted_image_detections[j]) > iou_threshold:
+                            is_maximal[j] = False
+                        else:
                             c_x = (sorted_image_detections[j][0] + sorted_image_detections[j][2]) / 2
                             c_y = (sorted_image_detections[j][1] + sorted_image_detections[j][3]) / 2
                             if sorted_image_detections[i][0] <= c_x <= sorted_image_detections[i][2] and \
-                                    sorted_image_detections[i][1] <= c_y <= sorted_image_detections[i][3]:
+                               sorted_image_detections[i][1] <= c_y <= sorted_image_detections[i][3]:
                                 is_maximal[j] = False
         return sorted_image_detections[is_maximal], sorted_scores[is_maximal]
 
-    def run(self):
-        """
-        Aceasta functie returneaza toate detectiile ( = ferestre) pentru toate imaginile din self.params.dir_test_examples
-        Directorul cu numele self.params.dir_test_examples contine imagini ce
-        pot sau nu contine fete. Aceasta functie ar trebui sa detecteze fete atat pe setul de
-        date MIT+CMU dar si pentru alte imagini
-        Functia 'non_maximal_suppression' suprimeaza detectii care se suprapun (protocolul de evaluare considera o detectie duplicata ca fiind falsa)
-        Suprimarea non-maximelor se realizeaza pe pentru fiecare imagine.
-        :return:
-        detections: numpy array de dimensiune NX4, unde N este numarul de detectii pentru toate imaginile.
-        detections[i, :] = [x_min, y_min, x_max, y_max]
-        scores: numpy array de dimensiune N, scorurile pentru toate detectiile pentru toate imaginile.
-        file_names: numpy array de dimensiune N, pentru fiecare detectie trebuie sa salvam numele imaginii.
-        (doar numele, nu toata calea).
-        """
+    def create_gaussian_pyramid_with_scales(self, img, scale_factor=0.5, min_size=(64, 64)):
+        pyramid = [img]
+        scales = [1.0]
+        while img.shape[0] > min_size[0] and img.shape[1] > min_size[1]:
+            img = cv.pyrDown(img)
+            pyramid.append(img)
+            scales.append(scales[-1] * scale_factor)
+        return pyramid, scales
 
+    def collect_hard_negatives(self):
+        ground_truth_dict = {}
+        with open(self.params.train_adnotations, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split()
+                file_name = parts[0]
+                x1, y1, x2, y2 = map(int, parts[1:5])
+                if file_name not in ground_truth_dict:
+                    ground_truth_dict[file_name] = []
+                ground_truth_dict[file_name].append([x1, y1, x2, y2])
+
+        train_images_path = os.path.join(self.params.dir_train_examples, '*.jpg')
+        train_files = glob.glob(train_images_path)
+
+        w = self.best_model.coef_.T
+        bias = self.best_model.intercept_[0]
+
+        hard_negative_descriptors = []
+
+        for i, img_path in enumerate(train_files):
+            short_name = ntpath.basename(img_path)
+            print(f'[HARD MINING] Procesăm {short_name} ({i+1}/{len(train_files)})')
+            img = cv.imread(img_path)
+            if img is None:
+                continue
+
+            pyramid, scales = self.create_gaussian_pyramid_with_scales(
+                img, scale_factor=0.5, min_size=(self.params.dim_window, self.params.dim_window)
+            )
+
+            image_detections = []
+            image_scores = []
+
+            for scale_idx, resized_img in enumerate(pyramid):
+                current_scale = scales[scale_idx]
+                num_cols = resized_img.shape[1] // self.params.dim_hog_cell - 1
+                num_rows = resized_img.shape[0] // self.params.dim_hog_cell - 1
+                num_cell_in_template = self.params.dim_window // self.params.dim_hog_cell - 1
+
+                for y in range(0, num_rows - num_cell_in_template):
+                    for x in range(0, num_cols - num_cell_in_template):
+                        x_min_local = x * self.params.dim_hog_cell
+                        y_min_local = y * self.params.dim_hog_cell
+                        x_max_local = x_min_local + self.params.dim_window
+                        y_max_local = y_min_local + self.params.dim_window
+
+                        window = resized_img[y_min_local:y_max_local, x_min_local:x_max_local]
+                        descr = self.compute_descriptors(window)
+                        score = np.dot(descr, w)[0] + bias
+
+                        if score > 1.0:
+                            x_min = int(x_min_local / current_scale)
+                            y_min = int(y_min_local / current_scale)
+                            x_max = int(x_max_local / current_scale)
+                            y_max = int(y_max_local / current_scale)
+                            image_detections.append([x_min, y_min, x_max, y_max])
+                            image_scores.append(score)
+
+            if len(image_scores) > 0:
+                image_detections, image_scores = self.non_maximal_suppression(
+                    np.array(image_detections),
+                    np.array(image_scores), img.shape
+                )
+                image_detections = image_detections.tolist()
+                image_scores = image_scores.tolist()
+
+            if short_name in ground_truth_dict:
+                gt_bboxes = ground_truth_dict[short_name]
+            else:
+                gt_bboxes = []
+
+            for det_idx, bbox_det in enumerate(image_detections):
+                x1_det, y1_det, x2_det, y2_det = bbox_det
+                score_det = image_scores[det_idx]
+
+                ious = [self.intersection_over_union(bbox_det, gt) for gt in gt_bboxes]
+                max_iou = max(ious) if len(ious) > 0 else 0
+
+                if max_iou == 0:
+                    patch = img[y1_det:y2_det, x1_det:x2_det]
+                    cv.imwrite(f'{self.params.dir_hard_neg_examples}/{(len(hard_negative_descriptors) + 3957):04d}.jpg', patch)
+                    if patch.shape[0] == self.params.dim_window and patch.shape[1] == self.params.dim_window:
+                        patch_descr = self.compute_descriptors(patch)
+                        hard_negative_descriptors.append(patch_descr)
+
+        if len(hard_negative_descriptors) == 0:
+            print("Nu am găsit  hard negatives cu scor > 3.0 și IoU=0!")
+            return np.array([])
+
+        hard_negative_descriptors = np.array(hard_negative_descriptors)
+        print(f"Am colectat {len(hard_negative_descriptors)} hard negatives.")
+        return hard_negative_descriptors
+    
+    def run(self):
         test_images_path = os.path.join(self.params.dir_test_examples, '*.jpg')
         test_files = glob.glob(test_images_path)
-        detections = None  # array cu toate detectiile pe care le obtinem
-        scores = np.array([])  # array cu toate scorurile pe care le obtinem
-        file_names = np.array([])  # array cu fisiele, in aceasta lista fisierele vor aparea de mai multe ori, pentru fiecare
-        # detectie din imagine, numele imaginii va aparea in aceasta lista
+        detections = None
+        scores = np.array([])
+        file_names = np.array([])
         w = self.best_model.coef_.T
         bias = self.best_model.intercept_[0]
         num_test_images = len(test_files)
-        descriptors_to_return = []
 
         for i in range(num_test_images):
             start_time = timeit.default_timer()
@@ -241,7 +285,6 @@ class FacialDetector:
 
             for j, resized_img in enumerate(pyramid):
                 current_scale = scales[j]
-                
                 num_cols = resized_img.shape[1] // self.params.dim_hog_cell - 1
                 num_rows = resized_img.shape[0] // self.params.dim_hog_cell - 1
                 num_cell_in_template = self.params.dim_window // self.params.dim_hog_cell - 1
@@ -255,12 +298,7 @@ class FacialDetector:
 
                         window = resized_img[y_min_local:y_max_local, x_min_local:x_max_local]
 
-                        hog_features = hog(cv.cvtColor(window, cv.COLOR_BGR2GRAY), pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
-                                        cells_per_block=(2, 2), feature_vector=True)
-
-                        color_features = self.compute_color_hist(window, bins=self.params.bins)
-
-                        descr = np.concatenate((hog_features, color_features))
+                        descr = self.compute_descriptors(window)
                         score = np.dot(descr, w)[0] + bias
 
                         if score > self.params.threshold:
@@ -268,13 +306,14 @@ class FacialDetector:
                             y_min = int(y_min_local / current_scale)
                             x_max = int(x_max_local / current_scale)
                             y_max = int(y_max_local / current_scale)
-
                             image_detections.append([x_min, y_min, x_max, y_max])
                             image_scores.append(score)
 
             if len(image_scores) > 0:
-                image_detections, image_scores = self.non_maximal_suppression(np.array(image_detections),
-                                                                            np.array(image_scores), img.shape)
+                image_detections, image_scores = self.non_maximal_suppression(
+                    np.array(image_detections),
+                    np.array(image_scores), img.shape
+                )
                 image_detections = image_detections.tolist()
                 image_scores = image_scores.tolist()
 
@@ -285,25 +324,14 @@ class FacialDetector:
                     detections = np.concatenate((detections, image_detections))
                 scores = np.append(scores, image_scores)
                 short_name = ntpath.basename(test_files[i])
-                image_names = [short_name for ww in range(len(image_scores))]
+                image_names = [short_name for _ in range(len(image_scores))]
                 file_names = np.append(file_names, image_names)
 
-                end_time = timeit.default_timer()
-                print('Timpul de procesarea al imaginii de testare %d/%d este %f sec.'
-                    % (i + 1, num_test_images, end_time - start_time))
+            end_time = timeit.default_timer()
+            print('Timpul de procesare al imaginii de testare %d/%d este %f sec.'
+                  % (i + 1, num_test_images, end_time - start_time))
 
         return detections, scores, file_names
-
-
-    def create_gaussian_pyramid_with_scales(self, img, scale_factor=0.5, min_size=(64, 64)):
-        pyramid = [img]
-        scales = [1.0]
-        while img.shape[0] > min_size[0] and img.shape[1] > min_size[1]:
-            img = cv.pyrDown(img)
-            pyramid.append(img)
-            scales.append(scales[-1] * scale_factor)
-        return pyramid, scales
-
 
     def compute_average_precision(self, rec, prec):
         # functie adaptata din 2010 Pascal VOC development kit

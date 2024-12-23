@@ -19,80 +19,88 @@ def iou(boxA, boxB):
     yA = max(boxA[1], boxB[1])
     xB = min(boxA[2], boxB[2])
     yB = min(boxA[3], boxB[3])
-
     interArea = max(0, xB - xA) * max(0, yB - yA)
     boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
     boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
     if boxAArea == 0 or boxBArea == 0:
         return 0.0
+    return interArea / float(boxAArea + boxBArea - interArea)
 
-    iou_value = interArea / float(boxAArea + boxBArea - interArea)
-    return iou_value
-
-# subject of discussion bcs I could leave a small error here like 5%
-def does_intersect_with_any(pos_boxes, neg_box):
+def does_intersect_with_any(pos_boxes, neg_box, max_iou_allowed=0.0):
     for pb in pos_boxes:
-        if iou(pb, neg_box) > 0:
+        if iou(pb, neg_box) > max_iou_allowed:  
             return True
     return False
 
-# 
 def load_annotations():
     annotations_dict = {}
     for character in characters:
         annotation_file = os.path.join(input_folder, f'{character}_annotations.txt')
         characters_images_folder = os.path.join(input_folder, character)
-
-
         with open(annotation_file, 'r') as f:
             for line in f:
                 line = line.strip().split(' ')
                 image_name = line[0]
                 x_min, y_min, x_max, y_max = map(int, line[1:5])
-                
                 image_path = os.path.join(characters_images_folder, image_name)
-
                 if image_path not in annotations_dict:
                     annotations_dict[image_path] = []
                 annotations_dict[image_path].append((x_min, y_min, x_max, y_max))
-
     return annotations_dict
 
-def create_negative_examples(max_neg_per_image=10):
-    # these are some of the aspect ratio that I did find by using count-aspect-ratios.py
-    # now of course i did select only the top 5 and compute manually the probabilities
-    # aspect_ratios = [1.0, 1.2, 1.15, 1.25, 1.3]
-    # probabilities = [0.815431, 0.049924, 0.045386, 0.045386, 0.043873]
+def create_pyramid(img, scale_factor=0.8, min_size=(32, 32)):
+    pyramid, scales = [], []
+    current_img = img.copy()
+    current_scale = 1.0
+    while current_img.shape[0] >= min_size[1] and current_img.shape[1] >= min_size[0]:
+        pyramid.append(current_img)
+        scales.append(current_scale)
+        new_w = int(current_img.shape[1] * scale_factor)
+        new_h = int(current_img.shape[0] * scale_factor)
+        current_scale *= scale_factor
+        current_img = cv.resize(img, (new_w, new_h))
+    return pyramid, scales
 
-    aspect_ratios = [1.0]
-    probabilities = [1.0]
+def scale_bboxes(bboxes, scale):
+    scaled = []
+    for (x_min, y_min, x_max, y_max) in bboxes:
+        scaled.append((
+            int(x_min * scale),
+            int(y_min * scale),
+            int(x_max * scale),
+            int(y_max * scale)
+        ))
+    return scaled
 
-    annotations_dict = load_annotations() 
+def create_negative_examples():
+    max_neg_per_scale = 2  # Vrem 5 imagini negative per scară.
+    annotations_dict = load_annotations()
     all_image_paths = list(annotations_dict.keys())
-    
     total_neg_created = 0
 
+    # all_image_paths = all_image_paths[0:1]
     for image_path in all_image_paths:
         img = cv.imread(image_path)
         if img is None:
             logging.warning(f"Could not load image: {image_path}. Skipping.")
             continue
 
-        height, width = img.shape[:2]
-        pos_boxes = annotations_dict[image_path]
+        pyramid, scales = create_pyramid(img, scale_factor=0.5, min_size=(49, 49))
+        pos_boxes_original = annotations_dict[image_path]
 
-        neg_created_for_this_image = 0
+        # Parcurgem fiecare scară din piramidă
+        for idx, resized_img in enumerate(pyramid):
+            scale_neg_count = 0  # contor pentru negative examples la scara curentă
+            scaled_pos_boxes = scale_bboxes(pos_boxes_original, scales[idx])
+            height, width = resized_img.shape[:2]
 
-        while neg_created_for_this_image < max_neg_per_image:
-            valid_patch_found = False
+            # Începem să generăm patch-uri negative la scara curentă
+            # Încercăm un număr mare de tentative, dar ne oprim dacă am extras 5
+            for _ in range(50):  
+                if scale_neg_count >= max_neg_per_scale:
+                    break
 
-            # I did assuma that some of images don't have enough negative examples
-            for _ in range(5):
-                ratio = random.choices(aspect_ratios, weights=probabilities, k=1)[0]
-                # w = random.randint(30, 80)  # random width
-                w = 49 # just temp
-                h = int(round(w * ratio)) # and based on that random width we compute the height
-
+                w, h = 49, 49  # exemplu; poți pune logică random
                 if w > width or h > height:
                     continue
 
@@ -102,33 +110,26 @@ def create_negative_examples(max_neg_per_image=10):
                 y_max = y_min + h
 
                 candidate_box = (x_min, y_min, x_max, y_max)
-
-                if not does_intersect_with_any(pos_boxes, candidate_box):
-                    cropped = img[y_min:y_max, x_min:x_max]
+                
+                # Verifică să nu se suprapună prea mult cu bounding box-urile scale
+                if not does_intersect_with_any(scaled_pos_boxes, candidate_box, max_iou_allowed=0.05):
+                    cropped = resized_img[y_min:y_max, x_min:x_max]
                     if cropped.size == 0:
                         continue
 
-                    base_name = os.path.basename(image_path)
-                    file_stem = os.path.splitext(base_name)[0]
-                    neg_name = (
-                        f"{total_neg_created:05d}.jpg"
-                    )
+                    neg_name = f"{total_neg_created:05d}.jpg"
                     out_path = os.path.join(negative_folder, neg_name)
                     cv.imwrite(out_path, cropped)
 
-                    valid_patch_found = True
-                    neg_created_for_this_image += 1
+                    scale_neg_count += 1
                     total_neg_created += 1
+                    logging.info(
+                        f"Saved negative example: {out_path} | scale={scales[idx]:.3f} | pyramid_index={idx}"
+                    )
 
-                    logging.info(f"Saved negative example: {out_path}")
-                    break
-
-            if not valid_patch_found:
-                # after 5 attempts we should stop trying to find a valid patch
-                logging.info(f"Could not find more negative patches in {image_path}. Moving on.")
-                break
+        logging.info(f"Processed image: {image_path}")
 
     logging.info(f"All done. Total negative examples created: {total_neg_created}")
 
 if __name__ == '__main__':
-    create_negative_examples(max_neg_per_image=5)
+    create_negative_examples()

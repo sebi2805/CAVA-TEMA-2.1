@@ -5,8 +5,14 @@ class Parameters:
         self.base_dir = './output'
         self.dir_pos_examples = os.path.join(self.base_dir, 'pozitive')
         self.dir_neg_examples = os.path.join(self.base_dir, 'negative')
-        self.dir_test_examples = r'C:\Users\User\Desktop\university\CAVA-TEMA-2\validare\validare'  # 'exempleTest/CursVA'   'exempleTest/CMU+MIT'
-        self.path_annotations = r'C:\Users\User\Desktop\university\CAVA-TEMA-2\validare\task1_gt_validare.txt'
+        self.dir_hard_neg_examples = os.path.join(self.base_dir, 'hard-negative')
+
+        self.dir_train_examples = r'C:\Users\User\Desktop\university\CAVA-TEMA-2\antrenare\deedee'
+        self.train_adnotations = r'C:\Users\User\Desktop\university\CAVA-TEMA-2\antrenare\deedee_annotations.txt'
+
+        self.dir_test_examples = r'C:\Users\User\Desktop\university\CAVA-TEMA-2\validare\validare_20'
+        # self.path_annotations = r'C:\Users\User\Desktop\university\CAVA-TEMA-2\validare\custom_annotations.txt'
+        self.path_annotations = r'C:\Users\User\Desktop\university\CAVA-TEMA-2\validare\task1_gt_validare20.txt'
         self.dir_save_files = os.path.join(self.base_dir, 'metrics')
         if not os.path.exists(self.dir_save_files):
             os.makedirs(self.dir_save_files)

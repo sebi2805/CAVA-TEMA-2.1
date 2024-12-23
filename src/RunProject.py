@@ -5,15 +5,15 @@ from Visualize import *
 
 
 params: Parameters = Parameters()
-params.dim_window = 49  # exemplele pozitive (fete de oameni cropate) au 36x36 pixeli
+params.dim_window = 49  # exemplele pozitive (fete de oameni cropate) au 36x36 pixeliA
 params.dim_hog_cell = 7  # dimensiunea celulei
 params.bins = 6 # for HSV colors we are using the bins
 
 params.overlap = 0.3
-params.number_positive_examples = 5665  # numarul exemplelor pozitive
-params.number_negative_examples = 33762  # numarul exemplelor negative
+params.number_positive_examples = 16995  # numarul exemplelor pozitive
+params.number_negative_examples = 27915  # numarul exemplelor negative
 
-params.threshold = 2.0 # toate ferestrele cu scorul > threshold si maxime locale devin detectii
+params.threshold = 1 # toate ferestrele cu scorul > threshold si maxime locale devin detectii
 params.has_annotations = True
 
 params.use_hard_mining = False  # (optional)antrenare cu exemple puternic negative
@@ -59,7 +59,7 @@ facial_detector.train_classifier(training_examples, train_labels)
 # astfel incat sa va returneze descriptorii detectiilor cu scor > 0 din cele 274 imagini negative
 # completati codul in continuareq
 # TODO:  (optional)  completeaza codul in continuare
-
+# facial_detector.collect_hard_negatives()
 
 detections, scores, file_names = facial_detector.run()
 

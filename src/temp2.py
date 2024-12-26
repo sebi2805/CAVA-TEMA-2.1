@@ -18,7 +18,7 @@ def count_images_in_folder(folder_path):
         return 0
 
 # Specificăm calea către folderul dorit
-folder_path = r"C:\Users\User\Desktop\university\CAVA-TEMA-2\output\negative"
+folder_path = r"C:\Users\User\Desktop\university\CAVA-TEMA-2\output\hard-negative\ratio_10"
 
 # Apelăm funcția și afișăm rezultatul
 num_images = count_images_in_folder(folder_path)

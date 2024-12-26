@@ -2,10 +2,10 @@ import os
 import cv2
 
 # Calea către directorul principal (înlocuiește cu calea ta)
-base_dir = "output/pozitive"
+base_dir = "output/hard-negative/ratio_14"
 
 # Dimensiunea la care dorim să redimensionăm imaginile
-resize_to = (49, 49)
+resize_to = (69, 49)
 
 def resize_images_in_folder(folder_path):
     for root, dirs, files in os.walk(folder_path):

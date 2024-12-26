@@ -10,11 +10,23 @@ import ntpath
 from copy import deepcopy
 import timeit
 from skimage.feature import hog
+import datetime
 
 class FacialDetector:
     def __init__(self, params: Parameters):
         self.params = params
-        self.best_model = None
+        self.best_models = {}
+
+    def ratio_to_folder(self, r):
+        ratio_str = str(r).replace('.', '')
+        return f"ratio_{ratio_str}"
+
+    def check_folder(self, folder):
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+            print(f"Directorul a fost creat: {folder}")
+        else:
+            print(f"Directorul {folder} exista")
 
     def compute_descriptors(self, img):
         hog_features = hog(
@@ -48,7 +60,9 @@ class FacialDetector:
         for i, file_path in enumerate(files):
             print(f"Procesam exemplul {label} numarul {i}...")
             img = cv.imread(file_path)
-
+            if img is None:
+                print(f"Imaginea {file_path} nu a fost încărcată corect.")
+                continue
             combined_features = self.compute_descriptors(img)
             descriptors_list.append(combined_features)
 
@@ -60,29 +74,114 @@ class FacialDetector:
         descriptors_list = np.array(descriptors_list)
         return descriptors_list
 
-    def get_positive_descriptors(self):
-        return self.get_descriptors_from_directory(self.params.dir_pos_examples, label="pozitive")
+    def get_positive_descriptors_for_ratio(self, r):
+        ratio_folder = self.ratio_to_folder(r)
+        samples_pos_dir = os.path.join(self.params.dir_pos_examples, ratio_folder)
 
-    def get_negative_descriptors(self):
-        negative_examples = self.get_descriptors_from_directory(self.params.dir_neg_examples, label="negative")
-        hard_negative_examples = self.get_descriptors_from_directory(self.params.dir_hard_neg_examples, label="hard-negative")
+        metrics_pos_dir = os.path.join(self.params.dir_save_files, ratio_folder)
+        positive_features_path = os.path.join(metrics_pos_dir, 'pozitive-descriptors_' + str(self.params.dim_window) + '_' + str(self.params.dim_hog_cell) + '_' + str(self.params.bins) + '.npy')
 
-        if len(hard_negative_examples) > 0:
-            negative_examples = np.concatenate((negative_examples, hard_negative_examples))
+        if os.path.exists(positive_features_path):
+            print('Am incarcat descriptorii pentru exemplele pozitive')
+        else:
+            print('Construim descriptorii pentru exemplele pozitive:')
+            positive_features = self.get_descriptors_from_directory(samples_pos_dir, label="pozitive")
+            self.check_folder(metrics_pos_dir)
+
+            np.save(positive_features_path, positive_features)
+
+            # TODO 
+            self.pos_count = len(positive_features)
+
+    def get_negative_descriptors_for_ratio(self, r):
+        ratio_folder = self.ratio_to_folder(r)
+
+        neg_samples_dir = os.path.join(self.params.dir_neg_examples, ratio_folder)
+        hard_neg_samples_dir = os.path.join(self.params.dir_hard_neg_examples, ratio_folder)
+        metrics_dir = os.path.join(self.params.dir_save_files, ratio_folder)
+        negative_features_path = os.path.join(metrics_dir, 'negative-descriptors_' + str(self.params.dim_window) + '_' + str(self.params.dim_hog_cell) + '_' + str(self.params.bins) + '.npy')
+
+        if os.path.exists(negative_features_path):
+            print('Am incarcat descriptorii pentru exemplele negative + hard negative')
+            all_negative_examples = np.load(negative_features_path)
+        else:
+            print('Construim descriptorii pentru exemplele negative:')
+            negative_features = self.get_descriptors_from_directory(neg_samples_dir, label="negative")
+
+            if self.params.use_hard_mining:
+                print('Construim descriptorii pentru exemplele hard negative:')
+                hard_negative_features = self.get_descriptors_from_directory(hard_neg_samples_dir, label="hard-negative")
+            else:
+                hard_negative_features = np.array([])
+
+            if hasattr(self, 'pos_count'):
+                neg_count = self.pos_count * 3 
+
+                normal_neg_count = int(neg_count * 0.7)
+                hard_neg_count = neg_count - normal_neg_count
+
+                print(f"-> Avem {self.pos_count} pozitive.")
+                print(f"-> Dorim in total ~{neg_count} negative (70% din set).")
+                print(f"    - {normal_neg_count} negative normale")
+                print(f"    - {hard_neg_count} hard negative")
+            else:
+                normal_neg_count = len(negative_features)
+                hard_neg_count = len(hard_negative_features)
+
+            all_negatives = negative_features
+            if len(hard_negative_features) > 0:
+                print(f"am folosit {len(hard_negative_features)} hard negative.")
+                all_negatives = np.concatenate((negative_features, hard_negative_features), axis=0)
+
+            total_available = len(all_negatives)
+            print(f"Total negative disponibile (normale + hard): {total_available}")
+
+            desired_count = normal_neg_count + hard_neg_count
+            if total_available > desired_count:
+                print(f"Vom face random sampling la {desired_count} din {total_available} negative totale.")
+                indices = np.arange(total_available)
+                np.random.shuffle(indices)
+                selected_indices = indices[:desired_count]
+                all_negative_examples = all_negatives[selected_indices]
+            else:
+                print("Numărul total de negative este mai mic sau egal cu necesarul, le luăm pe toate.")
+                all_negative_examples = all_negatives
+
+            self.check_folder(metrics_dir)
+            np.save(negative_features_path, all_negative_examples)
+
+        print(f"Numar total de exemple negative incarcate (final): {len(all_negative_examples)}")
+        return all_negative_examples
+ 
+
+    def train_classifier(self, r):
+        ratio_folder = self.ratio_to_folder(r)
+
+        pos_descriptor_path = os.path.join(self.params.dir_save_files, ratio_folder, 'pozitive-descriptors_'  + str(self.params.dim_window) + '_' + str(self.params.dim_hog_cell) + '_' + str(self.params.bins) + '.npy')
+        neg_descriptor_path = os.path.join(self.params.dir_save_files, ratio_folder, 'negative-descriptors_'  + str(self.params.dim_window) + '_' + str(self.params.dim_hog_cell) + '_' + str(self.params.bins) + '.npy')
+
+        positive_features = np.load(pos_descriptor_path)
+        negative_features = np.load(neg_descriptor_path)
+
+        print("Positive features shape:", positive_features.shape)
+        print("Negative features shape:", negative_features.shape)
+        training_examples = np.concatenate((np.squeeze(positive_features), np.squeeze(negative_features)), axis=0)
+        train_labels = np.concatenate((np.ones(positive_features.shape[0]), np.zeros(negative_features.shape[0])))
+
         
-        return negative_examples
-
-    def train_classifier(self, training_examples, train_labels):
         svm_file_name = os.path.join(
             self.params.dir_save_files,
-            'best_model_%d_%d_%d' % (
+            ratio_folder,
+            'best_model_%d_%d_%d_%d_%d' % (
+                self.params.dim_window,
                 self.params.dim_hog_cell,
+                self.params.bins,
                 self.params.number_negative_examples,
                 self.params.number_positive_examples
             )
         )
         if os.path.exists(svm_file_name):
-            self.best_model = pickle.load(open(svm_file_name, 'rb'))
+            self.best_models[r] = pickle.load(open(svm_file_name, 'rb'))
             return
 
         best_accuracy = 0
@@ -104,18 +203,18 @@ class FacialDetector:
         pickle.dump(best_model, open(svm_file_name, 'wb'))
 
         scores = best_model.decision_function(training_examples)
-        self.best_model = best_model
+        self.best_models[r] = best_model
         positive_scores = scores[train_labels > 0]
         negative_scores = scores[train_labels <= 0]
 
-        plt.plot(np.sort(positive_scores))
-        plt.plot(np.zeros(len(positive_scores)))
-        plt.plot(np.sort(negative_scores))
-        plt.xlabel('Nr example antrenare')
-        plt.ylabel('Scor clasificator')
-        plt.title('Distributia scorurilor clasificatorului pe exemplele de antrenare')
-        plt.legend(['Scoruri exemple pozitive', '0', 'Scoruri exemple negative'])
-        plt.show()
+        # plt.plot(np.sort(positive_scores))
+        # plt.plot(np.zeros(len(positive_scores)))
+        # plt.plot(np.sort(negative_scores))
+        # plt.xlabel('Nr example antrenare')
+        # plt.ylabel('Scor clasificator')
+        # plt.title('Distributia scorurilor clasificatorului pe exemplele de antrenare')
+        # plt.legend(['Scoruri exemple pozitive', '0', 'Scoruri exemple negative'])
+        # plt.show()
 
     def intersection_over_union(self, bbox_a, bbox_b):
         x_a = max(bbox_a[0], bbox_b[0])
@@ -156,172 +255,238 @@ class FacialDetector:
                                 is_maximal[j] = False
         return sorted_image_detections[is_maximal], sorted_scores[is_maximal]
 
-    def create_gaussian_pyramid_with_scales(self, img, scale_factor=0.5, min_size=(64, 64)):
+    def create_gaussian_pyramid_with_scales(self, img):
         pyramid = [img]
         scales = [1.0]
-        while img.shape[0] > min_size[0] and img.shape[1] > min_size[1]:
-            img = cv.pyrDown(img)
+        
+        while img.shape[0] > self.params.dim_window * 0.8 and img.shape[1] > self.params.dim_window * 0.8 and scales[-1] * self.params.scale >= 0.3:
+            new_width = int(img.shape[1] * self.params.scale)
+            new_height = int(img.shape[0] * self.params.scale)
+            
+            img = cv.resize(img, (new_width, new_height), interpolation=cv.INTER_LINEAR)
             pyramid.append(img)
-            scales.append(scales[-1] * scale_factor)
+            scales.append(scales[-1] * self.params.scale)
+        
         return pyramid, scales
 
     def collect_hard_negatives(self):
-        ground_truth_dict = {}
-        with open(self.params.train_adnotations, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split()
-                file_name = parts[0]
-                x1, y1, x2, y2 = map(int, parts[1:5])
-                if file_name not in ground_truth_dict:
-                    ground_truth_dict[file_name] = []
-                ground_truth_dict[file_name].append([x1, y1, x2, y2])
+        for r in self.params.aspect_ratios:
 
-        train_images_path = os.path.join(self.params.dir_train_examples, '*.jpg')
-        train_files = glob.glob(train_images_path)
-
-        w = self.best_model.coef_.T
-        bias = self.best_model.intercept_[0]
-
-        hard_negative_descriptors = []
-
-        for i, img_path in enumerate(train_files):
-            short_name = ntpath.basename(img_path)
-            print(f'[HARD MINING] Procesăm {short_name} ({i+1}/{len(train_files)})')
-            img = cv.imread(img_path)
-            if img is None:
+            if r not in self.best_models:
+                print(f"[HARD MINING] Nu există un model pentru aspect ratio-ul {r}. Sari peste.")
                 continue
 
-            pyramid, scales = self.create_gaussian_pyramid_with_scales(
-                img, scale_factor=0.5, min_size=(self.params.dim_window, self.params.dim_window)
-            )
+            print(f"[HARD MINING] Începem colectarea pentru aspect ratio={r} ...")
 
-            image_detections = []
-            image_scores = []
+            ratio_folder = self.ratio_to_folder(r)  # ex: "ratio_15" dacă r=1.5
+            hard_neg_subfolder = os.path.join(self.params.dir_hard_neg_examples, ratio_folder)
+            if not os.path.exists(hard_neg_subfolder):
+                os.makedirs(hard_neg_subfolder)
 
-            for scale_idx, resized_img in enumerate(pyramid):
-                current_scale = scales[scale_idx]
-                num_cols = resized_img.shape[1] // self.params.dim_hog_cell - 1
-                num_rows = resized_img.shape[0] // self.params.dim_hog_cell - 1
-                num_cell_in_template = self.params.dim_window // self.params.dim_hog_cell - 1
+            model = self.best_models[r]
+            w = model.coef_.T
+            bias = model.intercept_[0]
 
-                for y in range(0, num_rows - num_cell_in_template):
-                    for x in range(0, num_cols - num_cell_in_template):
-                        x_min_local = x * self.params.dim_hog_cell
-                        y_min_local = y * self.params.dim_hog_cell
-                        x_max_local = x_min_local + self.params.dim_window
-                        y_max_local = y_min_local + self.params.dim_window
+            counter = 0
 
-                        window = resized_img[y_min_local:y_max_local, x_min_local:x_max_local]
-                        descr = self.compute_descriptors(window)
-                        score = np.dot(descr, w)[0] + bias
-
-                        if score > 1.0:
-                            x_min = int(x_min_local / current_scale)
-                            y_min = int(y_min_local / current_scale)
-                            x_max = int(x_max_local / current_scale)
-                            y_max = int(y_max_local / current_scale)
-                            image_detections.append([x_min, y_min, x_max, y_max])
-                            image_scores.append(score)
-
-            if len(image_scores) > 0:
-                image_detections, image_scores = self.non_maximal_suppression(
-                    np.array(image_detections),
-                    np.array(image_scores), img.shape
-                )
-                image_detections = image_detections.tolist()
-                image_scores = image_scores.tolist()
-
-            if short_name in ground_truth_dict:
-                gt_bboxes = ground_truth_dict[short_name]
+            if r > 1.0:
+                h_patch = self.params.dim_window
+                w_patch = int(round(r * h_patch))
             else:
-                gt_bboxes = []
+                w_patch = self.params.dim_window
+                h_patch = int(round(w_patch / r))
 
-            for det_idx, bbox_det in enumerate(image_detections):
-                x1_det, y1_det, x2_det, y2_det = bbox_det
-                score_det = image_scores[det_idx]
+            for ch in self.params.characters:
+                if counter > 2500:
+                    break
+                print(f"[HARD MINING - {r}] Procesăm caracterul {ch} ...")
+                ground_truth_dict = {}
+                with open(os.path.join(self.params.train_adnotations, ch + '_annotations.txt'), 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        parts = line.split()
+                        file_name = parts[0]
+                        x1, y1, x2, y2 = map(int, parts[1:5])
+                        if file_name not in ground_truth_dict:
+                            ground_truth_dict[file_name] = []
+                        ground_truth_dict[file_name].append([x1, y1, x2, y2])
 
-                ious = [self.intersection_over_union(bbox_det, gt) for gt in gt_bboxes]
-                max_iou = max(ious) if len(ious) > 0 else 0
+                train_images_path = os.path.join(self.params.dir_train_examples, ch, '*.jpg')
+                train_files = glob.glob(train_images_path)
 
-                if max_iou == 0:
-                    patch = img[y1_det:y2_det, x1_det:x2_det]
-                    cv.imwrite(f'{self.params.dir_hard_neg_examples}/{(len(hard_negative_descriptors) + 3957):04d}.jpg', patch)
-                    if patch.shape[0] == self.params.dim_window and patch.shape[1] == self.params.dim_window:
-                        patch_descr = self.compute_descriptors(patch)
-                        hard_negative_descriptors.append(patch_descr)
+                hard_negative_descriptors = []
 
-        if len(hard_negative_descriptors) == 0:
-            print("Nu am găsit  hard negatives cu scor > 3.0 și IoU=0!")
-            return np.array([])
+                for i, img_path in enumerate(train_files):
+                    short_name = ntpath.basename(img_path)
+                    print(f'[HARD MINING - {r}] Procesăm {short_name} ({i+1}/{len(train_files)})')
+                    img = cv.imread(img_path)
+                    if img is None:
+                        continue
 
-        hard_negative_descriptors = np.array(hard_negative_descriptors)
-        print(f"Am colectat {len(hard_negative_descriptors)} hard negatives.")
-        return hard_negative_descriptors
+                    # Cream piramida în funcție de dimensiunea ferestrei (h_patch, w_patch)
+                    pyramid, scales = self.create_gaussian_pyramid_with_scales(img)
+
+                    image_detections = []
+                    image_scores = []
+
+                    # Calculăm numărul de celule HOG pe orizontală/verticală
+                    num_cell_in_w = (w_patch // self.params.dim_hog_cell) - 1
+                    num_cell_in_h = (h_patch // self.params.dim_hog_cell) - 1
+
+                    for scale_idx, resized_img in enumerate(pyramid):
+                        current_scale = scales[scale_idx]
+
+                        num_cols = resized_img.shape[1] // self.params.dim_hog_cell - 1
+                        num_rows = resized_img.shape[0] // self.params.dim_hog_cell - 1
+
+                        for y in range(0, num_rows - num_cell_in_h):
+                            for x in range(0, num_cols - num_cell_in_w):
+                                x_min_local = x * self.params.dim_hog_cell
+                                y_min_local = y * self.params.dim_hog_cell
+                                x_max_local = x_min_local + w_patch
+                                y_max_local = y_min_local + h_patch
+
+                                window = resized_img[y_min_local:y_max_local, x_min_local:x_max_local]
+                                descr = self.compute_descriptors(window)
+                                score = np.dot(descr, w)[0] + bias
+
+                                if score > 2.5:
+                                    # Transformăm coordonatele la scara originală
+                                    x_min = int(x_min_local / current_scale)
+                                    y_min = int(y_min_local / current_scale)
+                                    x_max = int(x_max_local / current_scale)
+                                    y_max = int(y_max_local / current_scale)
+                                    image_detections.append([x_min, y_min, x_max, y_max])
+                                    image_scores.append(score)
+
+                    # NMS
+                    if len(image_scores) > 0:
+                        image_detections, image_scores = self.non_maximal_suppression(
+                            np.array(image_detections),
+                            np.array(image_scores), img.shape
+                        )
+                        image_detections = image_detections.tolist()
+                        image_scores = image_scores.tolist()
+
+                    gt_bboxes = ground_truth_dict.get(short_name, [])
+
+                    for det_idx, bbox_det in enumerate(image_detections):
+                        x1_det, y1_det, x2_det, y2_det = bbox_det
+                        ious = [self.intersection_over_union(bbox_det, gt) for gt in gt_bboxes]
+                        max_iou = max(ious) if len(ious) > 0 else 0
+
+                        if max_iou < 0.25:
+                            patch = img[y1_det:y2_det, x1_det:x2_det]
+
+                            patch_name = f"{image_scores[det_idx]:.3f}_{counter:05d}.jpg"
+                            patch_path = os.path.join(hard_neg_subfolder, patch_name)
+
+                            patch = cv.resize(patch, (w_patch, h_patch))
+                            cv.imwrite(patch_path, patch)
+
+                            counter += 1
+
+                if len(hard_negative_descriptors) == 0:
+                    print(f"[{r}] Nu am găsit hard negatives cu scor > 1.0 și IoU=0!")
+                    continue
     
     def run(self):
         test_images_path = os.path.join(self.params.dir_test_examples, '*.jpg')
         test_files = glob.glob(test_images_path)
         detections = None
         scores = np.array([])
-        file_names = np.array([])
-        w = self.best_model.coef_.T
-        bias = self.best_model.intercept_[0]
         num_test_images = len(test_files)
+        file_names = np.array([])
 
         for i in range(num_test_images):
             start_time = timeit.default_timer()
             print('Procesam imaginea de testare %d/%d..' % (i + 1, num_test_images))
             img = cv.imread(test_files[i])
 
-            scale = 0.5
-            min_size = (self.params.dim_window, self.params.dim_window)
-            pyramid, scales = self.create_gaussian_pyramid_with_scales(img, scale, min_size)
-
             image_scores = []
             image_detections = []
 
-            for j, resized_img in enumerate(pyramid):
-                current_scale = scales[j]
-                num_cols = resized_img.shape[1] // self.params.dim_hog_cell - 1
-                num_rows = resized_img.shape[0] // self.params.dim_hog_cell - 1
-                num_cell_in_template = self.params.dim_window // self.params.dim_hog_cell - 1
+            for r in self.params.aspect_ratios:        
+                # Verificare dacă există model antrenat pentru aspect ratio-ul curent
+                if r not in self.best_models:
+                    print(f"Nu am gasit modelul pentru aspect ratio-ul {r}")
+                    continue
+                else:
+                    self.best_model = self.best_models[r]
+                    w = self.best_model.coef_.T
+                    bias = self.best_model.intercept_[0]
 
-                for y in range(0, num_rows - num_cell_in_template):
-                    for x in range(0, num_cols - num_cell_in_template):
-                        x_min_local = x * self.params.dim_hog_cell
-                        y_min_local = y * self.params.dim_hog_cell
-                        x_max_local = x_min_local + self.params.dim_window
-                        y_max_local = y_min_local + self.params.dim_window
+                # Calculăm înălțimea și lățimea ferestrei pe baza aspect ratio-ului
+                if r > 1:
+                    # r = w_patch / h_patch  =>  w_patch = r * h_patch
+                    h_patch = self.params.dim_window
+                    w_patch = int(round(r * h_patch))
+                else:
+                    # r = w_patch / h_patch  =>  h_patch = w_patch / r
+                    w_patch = self.params.dim_window
+                    h_patch = int(round(w_patch / r))
 
-                        window = resized_img[y_min_local:y_max_local, x_min_local:x_max_local]
+                pyramid, scales = self.create_gaussian_pyramid_with_scales(img)
 
-                        descr = self.compute_descriptors(window)
-                        score = np.dot(descr, w)[0] + bias
 
-                        if score > self.params.threshold:
-                            x_min = int(x_min_local / current_scale)
-                            y_min = int(y_min_local / current_scale)
-                            x_max = int(x_max_local / current_scale)
-                            y_max = int(y_max_local / current_scale)
-                            image_detections.append([x_min, y_min, x_max, y_max])
-                            image_scores.append(score)
+                # => calculăm numărul de celule pe orizontală și verticală
+                #    de ex: (w_patch // dim_hog_cell) - 1 și (h_patch // dim_hog_cell) - 1
+                num_cell_in_w = (w_patch // self.params.dim_hog_cell) - 1
+                num_cell_in_h = (h_patch // self.params.dim_hog_cell) - 1
 
+                for j, resized_img in enumerate(pyramid):
+                    current_scale = scales[j]
+
+                    # num_cols și num_rows se referă la numărul total de celule orizontale/verticale
+                    num_cols = resized_img.shape[1] // self.params.dim_hog_cell - 1
+                    num_rows = resized_img.shape[0] // self.params.dim_hog_cell - 1
+
+                    for y in range(0, num_rows - num_cell_in_h):
+                        for x in range(0, num_cols - num_cell_in_w):
+                            x_min_local = x * self.params.dim_hog_cell
+                            y_min_local = y * self.params.dim_hog_cell
+                            x_max_local = x_min_local + w_patch
+                            y_max_local = y_min_local + h_patch
+
+                            window = resized_img[y_min_local:y_max_local, x_min_local:x_max_local]
+
+                            # Extragem descriptorul (e.g. HOG) și calculăm scorul
+                            descr = self.compute_descriptors(window)
+                            score = np.dot(descr, w)[0] + bias
+                            if score > self.params.threshold:
+                                print(score)
+
+                                # Convertim coordonatele înapoi la dimensiunea originală
+                                x_min = int(x_min_local / current_scale)
+                                y_min = int(y_min_local / current_scale)
+                                x_max = int(x_max_local / current_scale)
+                                y_max = int(y_max_local / current_scale)
+
+                                image_detections.append([x_min, y_min, x_max, y_max])
+                                image_scores.append(score)
+
+                # Non-maximal suppression pentru a elimina suprapunerile
             if len(image_scores) > 0:
+                print("Aplicăm NMS...")
+                print(image_scores)
                 image_detections, image_scores = self.non_maximal_suppression(
                     np.array(image_detections),
                     np.array(image_scores), img.shape
                 )
+                print("Am aplicat NMS")
+                print(image_scores)
                 image_detections = image_detections.tolist()
                 image_scores = image_scores.tolist()
 
+            # Salvăm detecțiile pentru imaginea curentă
             if len(image_scores) > 0:
                 if detections is None:
                     detections = image_detections
                 else:
                     detections = np.concatenate((detections, image_detections))
+
                 scores = np.append(scores, image_scores)
                 short_name = ntpath.basename(test_files[i])
                 image_names = [short_name for _ in range(len(image_scores))]
@@ -329,9 +494,10 @@ class FacialDetector:
 
             end_time = timeit.default_timer()
             print('Timpul de procesare al imaginii de testare %d/%d este %f sec.'
-                  % (i + 1, num_test_images, end_time - start_time))
+                % (i + 1, num_test_images, end_time - start_time))
 
         return detections, scores, file_names
+
 
     def compute_average_precision(self, rec, prec):
         # functie adaptata din 2010 Pascal VOC development kit
@@ -388,13 +554,27 @@ class FacialDetector:
 
         cum_false_positive = np.cumsum(false_positive)
         cum_true_positive = np.cumsum(true_positive)
-
+        print('aici')
+        print(num_gt_detections)
+        print(cum_true_positive)
+        print(cum_false_positive)
         rec = cum_true_positive / num_gt_detections
         prec = cum_true_positive / (cum_true_positive + cum_false_positive)
         average_precision = self.compute_average_precision(rec, prec)
+
+        print(f"True Positives: {np.sum(true_positive)}")
+        print(f"False Positives: {np.sum(false_positive)}")
+        print(f"Recall: {np.average(rec)}")
+        print(f"Precision: {np.average(prec)}")
+
+        fp_value = len(false_positive)
         plt.plot(rec, prec, '-')
         plt.xlabel('Recall')
         plt.ylabel('Precision')
-        plt.title('Average precision %.3f' % average_precision)
-        plt.savefig(os.path.join(self.params.dir_save_files, 'precizie_medie.png'))
+        plt.title('Average precision %.3f, FP: %d' % (average_precision, fp_value))
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_name = f'precizie_medie_{timestamp}_WINDOW_{self.params.dim_window}_FP_{fp_value}.png'
+
+        plt.savefig(os.path.join(self.params.dir_save_files, file_name))
         plt.show()

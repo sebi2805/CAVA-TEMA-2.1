@@ -1,0 +1,7 @@
+path: ./dataset
+train: /content/dataset/images/train
+val: /content/dataset/images/train
+test: /content/dataset/images/test
+
+nc: 1
+names: ["face"]

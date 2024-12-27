@@ -112,8 +112,6 @@ class NegativeSamplesGenerator:
         total_neg_created = 0
 
         for image_path in all_image_paths:
-            if total_neg_created == 1:
-                break
             img = cv.imread(image_path)
             if img is None:
                 print(f"Could not load image: {image_path}. Skipping.")

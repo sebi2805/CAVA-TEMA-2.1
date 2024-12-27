@@ -115,7 +115,7 @@ class FacialDetector:
                 hard_negative_features = np.array([])
 
             if hasattr(self, 'pos_count'):
-                neg_count = self.pos_count * 3 
+                neg_count = self.pos_count * 5 
 
                 normal_neg_count = int(neg_count * 0.7)
                 hard_neg_count = neg_count - normal_neg_count
@@ -352,7 +352,7 @@ class FacialDetector:
                                 descr = self.compute_descriptors(window)
                                 score = np.dot(descr, w)[0] + bias
 
-                                if score > 2.5:
+                                if score > 1.0:
                                     # Transformăm coordonatele la scara originală
                                     x_min = int(x_min_local / current_scale)
                                     y_min = int(y_min_local / current_scale)
@@ -361,15 +361,6 @@ class FacialDetector:
                                     image_detections.append([x_min, y_min, x_max, y_max])
                                     image_scores.append(score)
 
-                    # NMS
-                    if len(image_scores) > 0:
-                        image_detections, image_scores = self.non_maximal_suppression(
-                            np.array(image_detections),
-                            np.array(image_scores), img.shape
-                        )
-                        image_detections = image_detections.tolist()
-                        image_scores = image_scores.tolist()
-
                     gt_bboxes = ground_truth_dict.get(short_name, [])
 
                     for det_idx, bbox_det in enumerate(image_detections):
@@ -377,7 +368,7 @@ class FacialDetector:
                         ious = [self.intersection_over_union(bbox_det, gt) for gt in gt_bboxes]
                         max_iou = max(ious) if len(ious) > 0 else 0
 
-                        if max_iou < 0.25:
+                        if max_iou < 0.15:
                             patch = img[y1_det:y2_det, x1_det:x2_det]
 
                             patch_name = f"{image_scores[det_idx]:.3f}_{counter:05d}.jpg"
@@ -456,8 +447,6 @@ class FacialDetector:
                             descr = self.compute_descriptors(window)
                             score = np.dot(descr, w)[0] + bias
                             if score > self.params.threshold:
-                                print(score)
-
                                 # Convertim coordonatele înapoi la dimensiunea originală
                                 x_min = int(x_min_local / current_scale)
                                 y_min = int(y_min_local / current_scale)

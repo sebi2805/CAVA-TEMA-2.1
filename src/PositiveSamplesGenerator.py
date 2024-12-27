@@ -97,7 +97,7 @@ class PositiveSamplesGenerator:
                     cv.imwrite(output_path, resized_cropped)
                     print(f"Cropped+Resized image saved: {output_path}")
 
-                    angles = [-random.randint(10, 30), random.randint(10, 30)]
+                    angles = [22, 45]
                     for r, angle in enumerate(angles, start=1):
                         rotated_cropped = self.rotate_image(resized_cropped, angle)
                         rotated_filename = f"{character}_{line[0].split('.')[0]}_rot{r}.jpg"

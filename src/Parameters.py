@@ -16,9 +16,9 @@ class Parameters:
         self.dir_train_examples = r'C:\Users\User\Desktop\university\CAVA-TEMA-2\antrenare'
         self.train_adnotations = r'C:\Users\User\Desktop\university\CAVA-TEMA-2\antrenare'
 
-        self.dir_test_examples = r'C:\Users\User\Desktop\university\CAVA-TEMA-2\validare\validare_20'
+        self.dir_test_examples = r'C:\Users\User\Desktop\university\CAVA-TEMA-2\validare\validare'
         # self.path_annotations = r'C:\Users\User\Desktop\university\CAVA-TEMA-2\validare\custom_annotations.txt'
-        self.path_annotations = r'C:\Users\User\Desktop\university\CAVA-TEMA-2\validare\task1_gt_validare20.txt'
+        self.path_annotations = r'C:\Users\User\Desktop\university\CAVA-TEMA-2\validare\task1_gt_validare.txt'
         self.dir_save_files = os.path.join(self.base_dir, 'metrics')
 
         self.aspect_ratios = [0.8, 1.0, 1.2, 1.4]
@@ -40,4 +40,4 @@ class Parameters:
         self.has_annotations = True
         self.threshold = 0
         self.bins = 6
-        self.scale = 0.8
+        self.scale = 0.9

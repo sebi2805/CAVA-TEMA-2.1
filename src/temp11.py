@@ -1,11 +1,10 @@
 import cv2
 
 # Calea către imagine și fișierul YOLO
-image_path = r"C:\Users\User\Desktop\university\CAVA-TEMA-2\output\yolo_t1_dataset\images\test\dad_0001.jpg"
+image_path = r"C:\Users\User\Desktop\university\CAVA-TEMA-2\output\yolo_t2_dataset\images\test\0002.jpg"
 annotations = [
-    "0 0.698958 0.394444 0.389583 0.633333",
-    "0 0.346875 0.472222 0.293750 0.333333",
-    "0 0.271875 0.583333 0.139583 0.144444",
+    "2 0.419792 0.673611 0.168750 0.169444",
+    "0 0.783333 0.226389 0.112500 0.241667"
 ]
 
 # Citirea imaginii

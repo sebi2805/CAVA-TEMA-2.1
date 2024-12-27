@@ -1,48 +1,33 @@
 import numpy as np
 
-# Path to the .npy file
+# Path to the .npy files
 detections_path = r"C:\Users\User\Desktop\university\CAVA-TEMA-2\evaluare\fisiere_solutie\331_Alexe_Bogdan\task1\detections_all_faces.npy"
+scores_path = r"C:\Users\User\Desktop\university\CAVA-TEMA-2\evaluare\fisiere_solutie\331_Alexe_Bogdan\task1\scores_all_faces.npy"
 
 try:
-    # Load the .npy file
+    # Load the .npy files
     detections = np.load(detections_path)
+    scores = np.load(scores_path)
 
-    # Get unique bounding boxes
-    unique_bounding_boxes = set(map(tuple, detections))
+    # Check if the lengths match
+    if len(detections) != len(scores):
+        raise ValueError("Detections and scores arrays must have the same length.")
 
-    # Compute unique width-height pairs and aspect ratios
-    unique_dimensions = set()
-    unique_aspect_ratios = set()
+    # Combine detections and scores into a single array
+    combined = np.hstack((detections, scores.reshape(-1, 1)))
 
-    for box in unique_bounding_boxes:
-        width = box[2] - box[0]
-        height = box[3] - box[1]
-        aspect_ratio = width / height if height != 0 else float('inf')
-        unique_dimensions.add((width, height))
-        unique_aspect_ratios.add(round(aspect_ratio, 2))
+    # Find unique rows based on the bounding box and score
+    unique_combined = np.unique(combined, axis=0)
 
-    # Sort the unique dimensions and aspect ratios
-    sorted_dimensions = sorted(unique_dimensions, key=lambda x: (x[0], x[1]))
-    sorted_aspect_ratios = sorted(unique_aspect_ratios)
+    # Sort unique rows by the score column (last column)
+    sorted_combined = unique_combined[np.argsort(-unique_combined[:, -1])]
 
-    # Display the results
-    print("Shape of the detections array:", detections.shape)
-    print("Unique bounding boxes, dimensions, and aspect ratios:")
-    # for box in unique_bounding_boxes:
-    #     width = box[2] - box[0]
-    #     height = box[3] - box[1]
-    #     aspect_ratio = width / height if height != 0 else float('inf')
-    #     print(f"(np.int32({box[0]}), np.int32({box[1]}), np.int32({box[2]}), np.int32({box[3]})) - Width: {width}, Height: {height}, Aspect Ratio: {aspect_ratio:.2f}")
-
-    # Display sorted unique width-height pairs
-    print("\nUnique width-height pairs:")
-    for dim in sorted_dimensions:
-        print(f"Width: {dim[0]}, Height: {dim[1]}")
-
-    # Display sorted unique aspect ratios
-    print("\nUnique aspect ratios:")
-    for ratio in sorted_aspect_ratios:
-        print(f"Aspect Ratio: {ratio}")
+    # Display sorted unique detections with width, height, and scores
+    print("Sorted unique detections with width, height, and scores:")
+    for row in sorted_combined:
+        width = row[2] - row[0]
+        height = row[3] - row[1]
+        print(f"Bounding Box: {row[:4].tolist()}, Width: {width}, Height: {height}, Score: {row[-1]:.4f}")
 
 except Exception as e:
     print("An error occurred:", e)

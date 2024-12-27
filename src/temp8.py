@@ -4,9 +4,9 @@ import cv2
 import os
 
 # Paths to the .npy files
-detections_path = r"C:\Users\User\Desktop\university\CAVA-TEMA-2\yolo\task1\detections_all_faces.npy"
-filenames_path = r"C:\Users\User\Desktop\university\CAVA-TEMA-2\yolo\task1\file_names_all_faces.npy"
-scores_path = r"C:\Users\User\Desktop\university\CAVA-TEMA-2\yolo\task1\scores_all_faces.npy"
+detections_path = r"C:\Users\User\Desktop\university\CAVA-TEMA-2\yolo\task2\detections_dad.npy"
+filenames_path = r"C:\Users\User\Desktop\university\CAVA-TEMA-2\yolo\task2\file_names_dad.npy"
+scores_path = r"C:\Users\User\Desktop\university\CAVA-TEMA-2\yolo\task2\scores_dad.npy"
 
 # Folder containing the validation images
 images_folder = r"C:\Users\User\Desktop\university\CAVA-TEMA-2\validare\validare"

@@ -106,7 +106,7 @@ class NegativeSamplesGenerator:
         return scaled
 
     def create_negative_examples(self):
-        max_neg_per_scale = 4
+        max_neg_per_scale = 2
         annotations_dict = self.load_annotations()
         all_image_paths = list(annotations_dict.keys())
         total_neg_created = 0

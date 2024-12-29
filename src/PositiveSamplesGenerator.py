@@ -51,6 +51,8 @@ class PositiveSamplesGenerator:
         return resized_cropped
 
     def create_pozitive_samples(self):
+        expand_factor = 0.10  # 10% mărire pe fiecare latură
+        
         for character in self.characters:
             characters_images = os.path.join(self.input_folder, character)
             annotation_file = os.path.join(self.input_folder, f'{character}_annotations.txt')
@@ -74,14 +76,32 @@ class PositiveSamplesGenerator:
                         continue
 
                     x_min, y_min, x_max, y_max = map(int, line[1:5])
-                    cropped_image = img[y_min:y_max, x_min:x_max]
-                    h, w = cropped_image.shape[:2]
+                    
+                    # Calculăm lățimea și înălțimea inițială
+                    w = x_max - x_min
+                    h = y_max - y_min
 
-                    if h <= 0 or w <= 0:
+                    # Calculăm noile coordonate cu 10% mai mari
+                    expand_w = int(round(w * expand_factor))
+                    expand_h = int(round(h * expand_factor))
+
+                    # Ajustăm coordonatele pentru bounding box
+                    x_min_expanded = max(0, x_min - expand_w)
+                    y_min_expanded = max(0, y_min - expand_h)
+                    x_max_expanded = min(img.shape[1], x_max + expand_w)
+                    y_max_expanded = min(img.shape[0], y_max + expand_h)
+
+                    # Crop
+                    cropped_image = img[y_min_expanded:y_max_expanded, x_min_expanded:x_max_expanded]
+                    h_cropped, w_cropped = cropped_image.shape[:2]
+
+                    # Validăm crop-ul (să nu fie 0x0)
+                    if h_cropped <= 0 or w_cropped <= 0:
                         print(f"Skipping invalid crop: {image_path}")
                         continue
 
-                    actual_ratio = w / float(h)
+                    # Aflăm aspect ratio
+                    actual_ratio = w_cropped / float(h_cropped)
                     closest_ratio = self.get_closest_ratio(actual_ratio)
                     self.ratio_distribution[closest_ratio] += 1
 

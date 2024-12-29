@@ -3,5 +3,5 @@ train: /content/dataset/images/train
 val: /content/dataset/images/train
 test: /content/dataset/images/test
 
-nc: 4
-names: ["dad", "mom", "dexter", "dee_dee"]
+nc: 1
+names: ["face"]
